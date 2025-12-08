@@ -2,6 +2,7 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 import datetime
+import altair as alt  # 🟢 دي المكتبة المسؤولة عن الرسم الاحترافي
 
 # 1. إعدادات الصفحة
 st.set_page_config(
@@ -25,22 +26,50 @@ st.markdown("""
         border-radius: 8px;
         border: 1px solid #444;
     }
-    h3 {
-        color: #4da6ff;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🦷 Nexus Dashboard")
 
 # ==========================================
-# 🎛️ الفلتر الذكي
+# 🖌️ دالة الرسم الاحترافي (عواميد + أرقام)
+# ==========================================
+def plot_with_labels(df, x_col, y_col, color, x_title, y_title):
+    # الأساس
+    base = alt.Chart(df).encode(
+        x=alt.X(x_col, sort='-y', axis=alt.Axis(title=x_title, labelAngle=-45)),
+        y=alt.Y(y_col, axis=alt.Axis(title=y_title)),
+        tooltip=[x_col, y_col]
+    )
+
+    # 1. طبقة العواميد
+    bars = base.mark_bar(color=color).encode(
+        y=alt.Y(y_col)
+    )
+
+    # 2. طبقة الأرقام (فوق العواميد)
+    text = base.mark_text(
+        align='center',
+        baseline='bottom',
+        dy=-5,  # ترفع الرقم فوق العمود سنة
+        color='white',
+        fontSize=12
+    ).encode(
+        text=alt.Text(y_col, format=',.0f') # تقريب لأقرب رقم صحيح
+    )
+
+    # دمج الاثنين وعرضهم
+    st.altair_chart(bars + text, use_container_width=True)
+
+
+# ==========================================
+# 🎛️ الفلتر
 # ==========================================
 st.write("### 🔍 Filter Period")
 filter_type = st.radio(
     "Select Period:", 
     ["Daily 📅", "Monthly 🗓️", "Yearly 📆", "All Time ♾️"], 
-    horizontal=True,
+    horizontal=True, 
     label_visibility="collapsed"
 )
 
@@ -87,7 +116,7 @@ try:
     conn = get_connection()
     
     # ==========================================
-    # 💰 1. الملخص المالي (Totals)
+    # 💰 1. الملخص المالي
     # ==========================================
     st.header(f"💵 Financial Summary ({display_label})")
     
@@ -108,47 +137,41 @@ try:
     st.markdown("---")
 
     # ==========================================
-    # ⚖️ 2. مقارنة الفروع والعيادات (الجديد)
+    # ⚖️ 2. مقارنة الفروع (مع أرقام 🔢)
     # ==========================================
-    st.header("⚖️ Branch Performance Comparison")
-    st.caption(f"Breakdown by Branch/Clinic for: {display_label}")
-
+    st.header("⚖️ Branch Performance")
+    
     tab1, tab2 = st.tabs(["💰 Income by Branch", "📉 Consumption by Branch"])
 
     with tab1:
-        # مقارنة الدخل (كل عيادة دخلت كام)
-        # لاحظ: بنجمع حسب 'branch_name' من جدول الدخل
         sql_inc_br = f"""
             SELECT branch_name, SUM(amount) as total 
             FROM income 
             {query_condition}
             GROUP BY branch_name
-            ORDER BY total DESC
         """
         df_inc_br = pd.read_sql(sql_inc_br, conn, params=query_params)
         
         if not df_inc_br.empty:
-            # بنستخدم index عشان نعرض الأسماء على المحور
-            st.bar_chart(df_inc_br.set_index("branch_name"), color="#2ECC71") 
+            # استخدام دالة الرسم الجديدة (لون أخضر)
+            plot_with_labels(df_inc_br, "branch_name", "total", "#2ECC71", "Branch Name", "Total Income")
         else:
-            st.info("No income data found for comparison.")
+            st.info("No data.")
 
     with tab2:
-        # مقارنة الاستهلاك (كل عيادة صرفت كام)
-        # لاحظ: بنجمع حسب 'requester' (اسم الطالب) من جدول الأوردرات
         sql_exp_br = f"""
             SELECT requester as branch, SUM(total_cost) as total 
             FROM orders 
             {query_condition}
             GROUP BY requester
-            ORDER BY total DESC
         """
         df_exp_br = pd.read_sql(sql_exp_br, conn, params=query_params)
         
         if not df_exp_br.empty:
-            st.bar_chart(df_exp_br.set_index("branch"), color="#FF4B4B")
+            # استخدام دالة الرسم الجديدة (لون أحمر)
+            plot_with_labels(df_exp_br, "branch", "total", "#FF4B4B", "Branch Name", "Total Expense")
         else:
-            st.info("No consumption data found for comparison.")
+            st.info("No data.")
 
     st.markdown("---")
 
@@ -166,12 +189,15 @@ try:
     """
     df_top = pd.read_sql(top_sql, conn, params=query_params)
     if not df_top.empty:
+        # هنا بنستخدم شارت عادي عشان الأفقي (Horizontal) أسهل في القراءة للأسماء الطويلة
         st.bar_chart(df_top, x="item", y="total_qty", color="#8E44AD", horizontal=True)
+        # لو عايز تعرض الجدول كمان للتأكيد:
+        st.dataframe(df_top, hide_index=True, use_container_width=True)
     else:
         st.info("No data.")
 
     # ==========================================
-    # 📦 4. النواقص (Alerts)
+    # 📦 4. النواقص
     # ==========================================
     st.markdown("---")
     st.subheader("🚨 Low Stock Alerts")
